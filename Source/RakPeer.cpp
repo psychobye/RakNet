@@ -4108,26 +4108,22 @@ namespace RakNet
 
 				// Assign new remote system
 				if (rss==0)
-					rss=rakPeer->AssignPlayerIDToRemoteSystemList(playerId, RakPeer::RemoteSystemStruct::UNVERIFIED_SENDER);
+					rss = rakPeer->AssignPlayerIDToRemoteSystemList(playerId, RakPeer::RemoteSystemStruct::UNVERIFIED_SENDER);
+			
+				// BR cookie
+				unsigned char c[3];
+				c[0] = 0x24; // packet ID
+				c[1] = 0x42; // Black
+				c[2] = 0x52; // Russia
 
-				unsigned char c[2];
-				if (rss) // If this guy is already connected remote system will be 0
+				for (unsigned i = 0; i < rakPeer->messageHandlerList.Size(); i++)
+					rakPeer->messageHandlerList[i]->OnDirectSocketSend((char*)&c, 24, playerId);
+				SocketLayer::Instance()->SendTo(rakPeer->connectionSocket, (char*)&c, 3, playerId.binaryAddress, playerId.port);
+			
+				if (rss)
 				{
 					s_uiLastProcessedBinaryAddr = playerId.binaryAddress;
 					s_uiLastProcessedConnTick = RakNet::GetTime();
-					c[0] = ID_OPEN_CONNECTION_REPLY;
-				}
-				else
-					c[0] = ID_NO_FREE_INCOMING_CONNECTIONS;
-				c[1] = 0; // Pad, some routers apparently block 1 byte packets
-
-				unsigned i;
-				for (i=0; i < rakPeer->messageHandlerList.Size(); i++)
-					rakPeer->messageHandlerList[i]->OnDirectSocketSend((char*)&c, 16, playerId);
-				SocketLayer::Instance()->SendTo( rakPeer->connectionSocket, (char*)&c, 2, playerId.binaryAddress, playerId.port );
-
-				if (rss)
-				{
 					SAMPRakNet::SetRequestingConnection(binaryAddress, true);
 				}
 
@@ -4656,42 +4652,63 @@ namespace RakNet
 					// For unknown senders we only accept a few specific packets
 					if (remoteSystem->connectMode==RemoteSystemStruct::UNVERIFIED_SENDER)
 					{
-						if ( (unsigned char)(data)[0] == ID_CONNECTION_REQUEST )
-						{
-							ParseConnectionRequestPacket(remoteSystem, playerId, (const char*)data, byteSize);
-							delete [] data;
-						}
-						else if ((unsigned char)(data)[0] != ID_AUTH_KEY || !ParseConnectionAuthPacket(remoteSystem, playerId, data, byteSize))
-						{
-							if ((unsigned char)(data)[0] == ID_RPC && remoteSystem->sampData.unverifiedRPCs++ < MAX_UNVERIFIED_RPCS)
-							{
-								// Ignore RPC packet
-								delete[] data;
-							}
-							else
-							{
-								if (remoteSystemIndex != -1)
-								{
-									Packet* packet = AllocPacket(sizeof(char));
-									packet->data[0] = ID_DISCONNECTION_NOTIFICATION;
-									packet->bitSize = (sizeof(char)) * 8;
-									packet->playerId = playerId;
-									packet->playerIndex = (PlayerIndex)remoteSystemIndex;
-									AddPacketToProducer(packet);
-								}
-								
-								CloseConnectionInternal(playerId, false, true, 0);
-#ifdef _DO_PRINTF
-								SAMPRakNet::GetCore()->printLn("Temporarily banning %s for sending nonsense data", playerId.ToString());
-#endif
-
-#if !defined(_COMPATIBILITY_1)
-								AddToBanList(PlayerIDToDottedIP(playerId), remoteSystem->reliabilityLayer.GetTimeoutTime());
-#endif
-								if (data)
-									delete[] data;
-							}
-						}
+					    if ((unsigned char)data[0] == ID_CONNECTION_REQUEST)
+					    {
+					        if (remoteSystem == nullptr)
+					            remoteSystem = AssignPlayerIDToRemoteSystemList(playerId, RakPeer::RemoteSystemStruct::UNVERIFIED_SENDER);
+					
+					        // BR cookie
+					        unsigned char c[3];
+					        c[0] = 0x24; // packet ID
+					        c[1] = 0x42; // Black
+					        c[2] = 0x52; // Russia
+					
+					        for (unsigned i = 0; i < messageHandlerList.Size(); i++)
+					            messageHandlerList[i]->OnDirectSocketSend((char*)&c, 24, playerId);
+					
+					        SocketLayer::Instance()->SendTo(connectionSocket, (char*)&c, 3, playerId.binaryAddress, playerId.port);
+					
+					        s_uiLastProcessedBinaryAddr = playerId.binaryAddress;
+					        s_uiLastProcessedConnTick = RakNet::GetTime();
+					
+					        SAMPRakNet::SetRequestingConnection(playerId.binaryAddress, true);
+					
+					        if (data)
+					            delete[] data;
+					
+					        return;
+					    }
+					    else if ((unsigned char)data[0] != ID_AUTH_KEY || !ParseConnectionAuthPacket(remoteSystem, playerId, data, byteSize))
+					    {
+					        if ((unsigned char)data[0] == ID_RPC && remoteSystem->sampData.unverifiedRPCs++ < MAX_UNVERIFIED_RPCS)
+					        {
+					            delete[] data;
+					        }
+					        else
+					        {
+					            if (remoteSystemIndex != -1)
+					            {
+					                Packet* packet = AllocPacket(sizeof(char));
+					                packet->data[0] = ID_DISCONNECTION_NOTIFICATION;
+					                packet->bitSize = sizeof(char) * 8;
+					                packet->playerId = playerId;
+					                packet->playerIndex = (PlayerIndex)remoteSystemIndex;
+					                AddPacketToProducer(packet);
+					            }
+					
+					            CloseConnectionInternal(playerId, false, true, 0);
+					
+					#ifdef _DO_PRINTF
+					            SAMPRakNet::GetCore()->printLn("Temporarily banning %s for sending nonsense data", playerId.ToString());
+					#endif
+					
+					#if !defined(_COMPATIBILITY_1)
+					            AddToBanList(PlayerIDToDottedIP(playerId), remoteSystem->reliabilityLayer.GetTimeoutTime());
+					#endif
+					            if (data)
+					                delete[] data;
+					        }
+					    }
 					}
 					else
 					{
